@@ -1,0 +1,90 @@
+-- Migration: create_bookings
+-- Task 05. One row per booking (slot appointment now; queue booking reserved for Task 06).
+-- Snapshots (doctor name, service names, price, duration, buffer, time zone, cancellation
+-- policy, booking rules) keep a historical booking meaningful after configuration changes.
+-- Times are UTC instants; block_ends_at = ends_at + buffer (the doctor is busy until then).
+--
+-- Capacity hold: a PENDING_CONFIRMATION row holds its interval only while
+-- confirmation_deadline > now (checked in every conflict query), so a stopped worker can never
+-- keep a hold alive. active_key marks holding statuses for the unique second-line constraints:
+--   (doctor_profile_id, starts_at, active_key)  one active booking per doctor start, GLOBAL
+--   (person_id, starts_at, active_key)          one active booking per patient start, GLOBAL
+--   (reschedule_of_booking_id, replacement_key) one pending replacement per original
+-- Overlaps with different starts are prevented in the service under row locks.
+
+CREATE TABLE bookings (
+  id                        BIGINT UNSIGNED   NOT NULL AUTO_INCREMENT,
+  clinic_id                 BIGINT UNSIGNED   NOT NULL,
+  branch_id                 BIGINT UNSIGNED   NOT NULL,
+  mode                      VARCHAR(8)        NOT NULL DEFAULT 'SLOT',
+  status                    VARCHAR(24)       NOT NULL,
+  patient_profile_id        BIGINT UNSIGNED   NOT NULL,
+  person_id                 BIGINT UNSIGNED   NOT NULL,
+  doctor_profile_id         BIGINT UNSIGNED   NOT NULL,
+  assignment_id             BIGINT UNSIGNED   NOT NULL,
+  offering_id               BIGINT UNSIGNED   NOT NULL,
+  service_id                BIGINT UNSIGNED   NOT NULL,
+  starts_at                 DATETIME(3)       NULL,
+  ends_at                   DATETIME(3)       NULL,
+  block_ends_at             DATETIME(3)       NULL,
+  queue_session_id          BIGINT UNSIGNED   NULL,
+  time_zone                 VARCHAR(64)       NOT NULL,
+  confirmation_deadline     DATETIME(3)       NOT NULL,
+  actor_kind                VARCHAR(16)       NOT NULL,
+  actor_user_id             BIGINT UNSIGNED   NULL,
+  guest_session_id          BIGINT UNSIGNED   NULL,
+  delegation_id             BIGINT UNSIGNED   NULL,
+  relationship              VARCHAR(16)       NULL,
+  contact_phone_e164        VARCHAR(16)       NULL,
+  patient_note              VARCHAR(500)      NULL,
+  doctor_display_name       VARCHAR(150)      NOT NULL,
+  service_name_en           VARCHAR(200)      NULL,
+  service_name_ar           VARCHAR(200)      NULL,
+  price_minor               BIGINT UNSIGNED   NOT NULL,
+  currency                  CHAR(3)           NOT NULL,
+  duration_minutes          SMALLINT UNSIGNED NOT NULL,
+  buffer_minutes            SMALLINT UNSIGNED NOT NULL,
+  cancellation_policy       JSON              NOT NULL,
+  booking_rules             JSON              NOT NULL,
+  reschedule_of_booking_id  BIGINT UNSIGNED   NULL,
+  superseded_by_booking_id  BIGINT UNSIGNED   NULL,
+  status_reason             VARCHAR(1000)     NULL,
+  status_changed_at         DATETIME(3)       NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  status_changed_by_user_id BIGINT UNSIGNED   NULL,
+  active_key                TINYINT UNSIGNED AS (IF(status IN ('PENDING_CONFIRMATION', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'), 1, NULL)) STORED,
+  replacement_key           TINYINT UNSIGNED AS (IF(status = 'PENDING_CONFIRMATION' AND reschedule_of_booking_id IS NOT NULL, 1, NULL)) STORED,
+  created_at                DATETIME(3)       NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at                DATETIME(3)       NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_bookings_clinic_id (clinic_id, id),
+  UNIQUE KEY uq_bookings_doctor_start (doctor_profile_id, starts_at, active_key),
+  UNIQUE KEY uq_bookings_person_start (person_id, starts_at, active_key),
+  UNIQUE KEY uq_bookings_one_replacement (reschedule_of_booking_id, replacement_key),
+  KEY ix_bookings_doctor_time (doctor_profile_id, starts_at, block_ends_at),
+  KEY ix_bookings_person_time (person_id, starts_at),
+  KEY ix_bookings_deadline (status, confirmation_deadline),
+  KEY ix_bookings_clinic_branch_time (clinic_id, branch_id, starts_at),
+  KEY ix_bookings_clinic_status (clinic_id, status, id),
+  KEY ix_bookings_patient (clinic_id, patient_profile_id, id),
+  KEY ix_bookings_assignment (clinic_id, assignment_id, starts_at),
+  CONSTRAINT fk_bookings_branch FOREIGN KEY (clinic_id, branch_id) REFERENCES clinic_branches (clinic_id, id) ON DELETE RESTRICT,
+  CONSTRAINT fk_bookings_patient FOREIGN KEY (clinic_id, patient_profile_id) REFERENCES patient_profiles (clinic_id, id) ON DELETE RESTRICT,
+  CONSTRAINT fk_bookings_person FOREIGN KEY (person_id) REFERENCES booking_persons (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_bookings_doctor FOREIGN KEY (doctor_profile_id) REFERENCES doctor_profiles (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_bookings_assignment FOREIGN KEY (clinic_id, branch_id, assignment_id) REFERENCES doctor_branch_assignments (clinic_id, branch_id, id) ON DELETE RESTRICT,
+  CONSTRAINT fk_bookings_offering FOREIGN KEY (clinic_id, branch_id, offering_id) REFERENCES branch_service_offerings (clinic_id, branch_id, id) ON DELETE RESTRICT,
+  CONSTRAINT fk_bookings_service FOREIGN KEY (clinic_id, service_id) REFERENCES clinic_services (clinic_id, id) ON DELETE RESTRICT,
+  CONSTRAINT fk_bookings_actor FOREIGN KEY (actor_user_id) REFERENCES users (id) ON DELETE SET NULL,
+  CONSTRAINT fk_bookings_guest FOREIGN KEY (guest_session_id) REFERENCES guest_booking_sessions (id) ON DELETE SET NULL,
+  CONSTRAINT fk_bookings_delegation FOREIGN KEY (delegation_id) REFERENCES booking_delegations (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_bookings_reschedule_of FOREIGN KEY (reschedule_of_booking_id) REFERENCES bookings (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_bookings_superseded_by FOREIGN KEY (superseded_by_booking_id) REFERENCES bookings (id) ON DELETE SET NULL,
+  CONSTRAINT fk_bookings_changed_by FOREIGN KEY (status_changed_by_user_id) REFERENCES users (id) ON DELETE SET NULL,
+  CONSTRAINT ck_bookings_mode CHECK (mode IN ('SLOT', 'QUEUE')),
+  CONSTRAINT ck_bookings_status CHECK (status IN ('PENDING_CONFIRMATION', 'CONFIRMED', 'REJECTED', 'CHECKED_IN', 'IN_PROGRESS',
+    'COMPLETED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED', 'EXPIRED')),
+  CONSTRAINT ck_bookings_slot_times CHECK (mode <> 'SLOT' OR (starts_at IS NOT NULL AND ends_at > starts_at AND block_ends_at >= ends_at)),
+  CONSTRAINT ck_bookings_actor CHECK (actor_kind IN ('SELF', 'DELEGATE', 'GUEST', 'STAFF')),
+  CONSTRAINT ck_bookings_price CHECK (price_minor <= 1000000000),
+  CONSTRAINT ck_bookings_currency CHECK (currency REGEXP '^[A-Z]{3}$')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

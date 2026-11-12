@@ -1,0 +1,131 @@
+# Development environment: backend API + MySQL 8 + Redis.
+#
+#   cp .env.example .env   # then fill in every empty value
+#   docker compose up -d --build
+#
+# No credentials live in this file. Required variables use ${VAR:?} so Compose refuses to
+# start when they are missing. Host ports bind to 127.0.0.1 only.
+
+name: medibook
+
+x-backend-env: &backend-env
+  NODE_ENV: development
+  HTTP_HOST: 0.0.0.0
+  HTTP_PORT: '3000'
+  LOG_LEVEL: ${LOG_LEVEL:-debug}
+  LOG_PRETTY: ${LOG_PRETTY:-true}
+  DB_HOST: mysql
+  DB_PORT: '3306'
+  DB_NAME: ${MYSQL_DATABASE:?MYSQL_DATABASE is required (see .env.example)}
+  DB_USER: ${MYSQL_USER:?MYSQL_USER is required (see .env.example)}
+  DB_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required (see .env.example)}
+  REDIS_HOST: redis
+  REDIS_PORT: '6379'
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required (see .env.example)}
+  AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required (run npm run secrets:generate)}
+  AUTH_ACCESS_TOKEN_PRIVATE_KEY: ${AUTH_ACCESS_TOKEN_PRIVATE_KEY:?AUTH_ACCESS_TOKEN_PRIVATE_KEY is required}
+  AUTH_ACCESS_TOKEN_KEY_ID: ${AUTH_ACCESS_TOKEN_KEY_ID:?AUTH_ACCESS_TOKEN_KEY_ID is required}
+  MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?MFA_ENCRYPTION_KEY is required}
+  # Development only: the mock provider writes codes to the backend log. Rejected in production.
+  OTP_PROVIDER: mock
+  PHONE_DEFAULT_REGION: ${PHONE_DEFAULT_REGION:-}
+
+x-backend-build: &backend-build
+  context: .
+  dockerfile: infrastructure/docker/backend.Dockerfile
+  target: dev
+
+services:
+  backend:
+    build: *backend-build
+    image: medibook-backend:dev
+    init: true # tini as PID 1: forwards SIGTERM so graceful shutdown runs
+    environment: *backend-env
+    ports:
+      - '127.0.0.1:${BACKEND_HOST_PORT:-3000}:3000'
+    volumes:
+      - ./apps/backend/src:/app/apps/backend/src:ro
+      - ./apps/backend/tests:/app/apps/backend/tests:ro
+      - ./apps/backend/migrations:/app/apps/backend/migrations
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  # Background worker. Opt-in: `docker compose --profile worker up -d`
+  worker:
+    profiles: ['worker']
+    build: *backend-build
+    image: medibook-backend:dev
+    init: true
+    command: ['/app/node_modules/.bin/tsx', 'watch', '--clear-screen=false', 'src/worker.ts']
+    environment: *backend-env
+    volumes:
+      - ./apps/backend/src:/app/apps/backend/src:ro
+    healthcheck:
+      disable: true
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+      - --sql-mode=STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,ONLY_FULL_GROUP_BY
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required (see .env.example)}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE is required}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER is required}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+    ports:
+      - '127.0.0.1:${MYSQL_HOST_PORT:-3306}:3306'
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./infrastructure/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # TCP (not socket) so the check only passes once init scripts are done and networking is on.
+      test:
+        [
+          'CMD-SHELL',
+          'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysqladmin ping -h 127.0.0.1 -uroot --silent',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required (see .env.example)}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    # noeviction is required by BullMQ: evicted keys would silently lose jobs.
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes --maxmemory-policy noeviction
+    ports:
+      - '127.0.0.1:${REDIS_HOST_PORT:-6379}:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  redis-data:

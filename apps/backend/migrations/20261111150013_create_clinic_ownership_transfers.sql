@@ -1,0 +1,38 @@
+-- Migration: create_clinic_ownership_transfers
+-- Ownership transfer: current owner initiates (= owner approval), recipient explicitly accepts,
+-- Super Admin verifies identity and approves; completion swaps owner memberships atomically.
+
+CREATE TABLE clinic_ownership_transfers (
+  id                     BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  clinic_id              BIGINT UNSIGNED NOT NULL,
+  from_user_id           BIGINT UNSIGNED NOT NULL,
+  to_user_id             BIGINT UNSIGNED NOT NULL,
+  status                 VARCHAR(24)   NOT NULL DEFAULT 'PENDING_ACCEPTANCE',
+  reason                 VARCHAR(1000) NULL,
+  from_user_approved_at  DATETIME(3)   NOT NULL,
+  to_user_accepted_at    DATETIME(3)   NULL,
+  identity_verification  VARCHAR(16)   NOT NULL DEFAULT 'PENDING',
+  identity_verified_by_user_id BIGINT UNSIGNED NULL,
+  identity_verified_at   DATETIME(3)   NULL,
+  identity_note          VARCHAR(1000) NULL,
+  expires_at             DATETIME(3)   NOT NULL,
+  decided_by_user_id     BIGINT UNSIGNED NULL,
+  decided_at             DATETIME(3)   NULL,
+  decision_reason        VARCHAR(1000) NULL,
+  open_key               BIGINT UNSIGNED AS (IF(status IN ('PENDING_ACCEPTANCE', 'PENDING_REVIEW'), clinic_id, NULL)) STORED,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cot_open (open_key),
+  KEY ix_cot_clinic (clinic_id, id),
+  KEY ix_cot_to_user (to_user_id, status),
+  KEY ix_cot_status (status, id),
+  CONSTRAINT fk_cot_clinic FOREIGN KEY (clinic_id) REFERENCES clinics (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_cot_from FOREIGN KEY (from_user_id) REFERENCES users (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_cot_to FOREIGN KEY (to_user_id) REFERENCES users (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_cot_identity_by FOREIGN KEY (identity_verified_by_user_id) REFERENCES users (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_cot_decided_by FOREIGN KEY (decided_by_user_id) REFERENCES users (id) ON DELETE RESTRICT,
+  CONSTRAINT ck_cot_parties CHECK (from_user_id <> to_user_id),
+  CONSTRAINT ck_cot_status CHECK (status IN ('PENDING_ACCEPTANCE', 'PENDING_REVIEW', 'COMPLETED', 'REJECTED', 'DECLINED', 'CANCELLED', 'EXPIRED')),
+  CONSTRAINT ck_cot_identity CHECK (identity_verification IN ('PENDING', 'VERIFIED', 'FAILED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

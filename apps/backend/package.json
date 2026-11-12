@@ -1,0 +1,51 @@
+{
+  "name": "@medibook/backend",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MediBook backend API (Express modular monolith) and background worker.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/server.ts",
+    "dev:worker": "tsx watch --clear-screen=false src/worker.ts",
+    "start": "node dist/server.js",
+    "start:worker": "node dist/worker.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "migrate": "tsx src/infrastructure/database/migrations/cli.ts up",
+    "migrate:status": "tsx src/infrastructure/database/migrations/cli.ts status",
+    "migrate:create": "tsx src/infrastructure/database/migrations/cli.ts create",
+    "clean": "rm -rf dist",
+    "secrets:generate": "tsx src/tools/generate-secrets.ts",
+    "role:grant": "tsx src/tools/global-role.ts grant",
+    "role:revoke": "tsx src/tools/global-role.ts revoke",
+    "test:auth": "vitest run --config vitest.integration.config.ts tests/integration/auth/",
+    "test:authorization": "vitest run --config vitest.integration.config.ts tests/integration/authorization",
+    "test:tenant": "vitest run --config vitest.integration.config.ts tests/integration/tenant-isolation",
+    "test:security": "vitest run --config vitest.integration.config.ts tests/integration/security",
+    "test:api": "vitest run --config vitest.integration.config.ts tests/integration/api",
+    "test:platform": "vitest run --config vitest.integration.config.ts tests/integration/platform",
+    "test:clinic-setup": "vitest run --config vitest.integration.config.ts tests/integration/clinic-setup",
+    "test:bookings": "vitest run --config vitest.integration.config.ts tests/integration/bookings"
+  },
+  "dependencies": {
+    "bullmq": "^5.81.5",
+    "express": "^5.3.0",
+    "ioredis": "^5.11.1",
+    "jose": "^6.2.17",
+    "libphonenumber-js": "^1.13.16",
+    "mysql2": "^3.24.6",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/supertest": "^7.2.1",
+    "pino-pretty": "^13.2.0",
+    "supertest": "^7.3.2",
+    "tsx": "^4.23.15"
+  }
+}

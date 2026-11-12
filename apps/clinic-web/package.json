@@ -1,0 +1,6 @@
+{
+  "name": "@medibook/clinic-web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Clinic-facing web application (clinic management)."
+}

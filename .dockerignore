@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+.git
+.env
+.env.*
+!.env.example
+**/.env
+**/.private-storage

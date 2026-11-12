@@ -1,0 +1,23 @@
+{
+  "name": "@medibook/design-tokens",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Design tokens (colors, spacing, typography) shared by web and mobile UIs.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  }
+}
